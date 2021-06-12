@@ -1,0 +1,784 @@
+---
+title: "Progetto Fondamenti di Scienza dei Dati e Laboratorio"
+author: "Denis Eduard Tapu"
+date: "15 Giugno, 2021"
+output:
+  ioslides_presentation
+---
+
+```{css, echo=FALSE}
+blockquote {
+  background: #f9f9f9;
+  border-left: 5px solid #ccc;
+  margin: 1.5em 10px;
+  padding: 0.5em 1.5em;
+}
+
+/* scrolling */
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+
+/* hide page numbers */
+slides > slide:not(.nobackground):after {
+  content: '';
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, message = FALSE, warning = FALSE)
+```
+
+
+```{r eval=TRUE, echo=FALSE}
+library(tidyverse)
+library(plotly)
+library(lubridate)
+library(corrplot)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(tidytext)
+options(dplyr.summarise.inform = FALSE)
+```
+
+# Descrizione e analisi dei dati Anime 
+
+## Cosa sono gli Anime?
+
+> Con la parola **anime** si definisce l’animazione giapponese in tutte le sue forme, dall’opera cinematografica alla serie televisiva, passando per gli OVA, prodotti realizzati per il solo mercato home video.
+Essa è l’abbreviazione di animêshon, a sua volta traslitterazione giapponese della parola inglese animation.
+
+
+<center>
+  <img src="https://www.smartworld.it/wp-content/uploads/2020/03/anime.jpg" width="50%" height="50%" />
+</center>
+
+## Tipi di anime
+
+> Il **tipo** dell'anime dipende principalemente dal **canale** di trasmissione su cui questo è pubblicato originariamente, ma anche da altre caratteristiche come la periodicità, la durata o il significato che assumono all'interno di uno specifico contesto.
+
+* TV - Realizzato per la trasmissione sulla Televisione.
+* Movie - Realizzato per la pubblicazione nei Cinema.
+* OVA - Original video animation. Realizzato per la pubblicazione su DVD e/o altri formati home video.
+* ONA - Original Net Animation. Realizzato per la pubblicazione su internet.
+* Special - Episodi o clip aggiuntivi/extra alla serie principale.
+* Music - Di solito clip che hanno come principale componente la parte audio/musicale, integrata da una parte visuale/animata.
+
+## Dataset
+
+Per effettuare l'analisi viene utilizzato un dataset i cui dati sono provenienti dal più grande raccoglitore e database di Anime.
+
+> [MyAnimeList](https://myanimelist.net/) è un sito web di social networking basato su anime e manga. Il sito fornisce ai suoi utenti un sistema simile a un elenco per organizzare e segnare anime e manga. Facilita la ricerca degli utenti che condividono gusti simili e fornisce un ampio database su anime e manga.
+
+Il dataset iniziale è composto da 15,278 osservazioni di 27 variabili, ma facendo una iniziale pulizia escludendo gli anime con popolarità o rank uguali a 0, e selezionando solo le variabili di interesse otteniamo il seguente dataset su cui operare:
+
+```{r eval=TRUE, echo=FALSE}
+anime = read_csv("Anime.csv")%>%
+  filter(rank != 0, popularity != 0) %>% 
+  select(-title_japanese, -title_synonyms, -background, -title_english, -related, -broadcast, -airing, -status, -producers, -animeID)
+
+glimpse(anime)
+```
+
+
+## Correlazione tra le variabili
+
+Considerando le variabili numeriche ed effettuando il test di correlazione tra di loro, otteniamo i seguenti risultati visualizzati nella matrice di correlazione:
+
+```{r eval=TRUE, echo=FALSE}
+cor_anime= anime %>% 
+  filter(score>0 ) %>% 
+  select(score,scored_by,rank,popularity,members,favorites)
+
+corrplot(cor(cor_anime), method = "color", order = "hclust", addrect = 2)
+  
+```
+
+Da questo si può osservare che:
+
+* Possiamo ottenere *due cluster* principali: {rank, popularity} e {score, favorites, scored_by, members}.
+* La *correlazione positiva* maggiore si ha tra **members**(numero di membri) e **scored_by**(quante persone hanno attribuito uno score), giustamente perchè più persone saranno membri di un certo anime, più voti questo avrà ricevuto.
+* La *correlazione negativa* maggiore si ha, invece, tra **score** e **rank**, infatti questo indica la posizione nella classifica dei "migliori" anime, e più il rank è basso migliore sarà, al contrario dello score (voro [0, 10]), che è desiderabile alto. Questo quindi ci dice che lo score influisce molto sul rank, e maggiore sarà il primo, minore sarà il secondo.
+* La variabile **favorites** è quella che presenta la maggior parte delle correlazioni nulle (vicine a 0), quinidi la relazione *lineare* tra essa e rank, popularity e score è minima, ma questo non implica che non ci possano essere altre forme di relazione/dipendanza più forti tra esse.
+
+# Analisi iniziale generale
+
+## Quali tipi di anime sono i più pubblicati e i più seguiti?  
+
+```{r eval=TRUE, echo=FALSE}
+type_anime = anime %>% 
+    filter(type!="Unknown") %>% 
+    group_by(type) %>% 
+    summarise(nAnime = n(), nMembers = sum(members)) %>%
+    arrange(-nAnime) %>% 
+  mutate(Anime_pubblicati = nAnime / sum(nAnime), Membri=nMembers/sum(nMembers)) %>% 
+  mutate(Type=factor(type,type)) %>% 
+  pivot_longer(cols=4:5, names_to="chart", values_to = "Relative_Freq")
+    
+
+type_anime %>% 
+  ggplot(aes(x=Type, y=Relative_Freq, colour = factor(type))) +
+    geom_segment( aes(x=Type, xend=Type, y=0, yend=Relative_Freq), color="grey") +
+    geom_point(size=4) +
+  theme_light()+
+    theme(
+      legend.position = "none",
+        panel.spacing = unit(2, "lines")
+    ) +
+    labs(title = "Frequenza degli anime pubblicati e dei membri, per ciascun tipo.",
+       y = "Frequenza relativa", x = "Tipo")+
+    facet_wrap(~chart, scales = "free_y")
+
+
+```
+Dai grafici si nota subito che il tipo "**TV**" risulta sovrastante rispetto agli altri, soprattutto per quanto riguarda i membri che seguono questo tipo di anime.
+
+
+Più interessante tuttavia è vedere come l'ordinamento per frequenza tra i tipi rimanga lo stesso in entrambi i casi, esprimendo una certa *dipendenza* tra gli anime che vengono seguiti e pubblicati, ci si può infatti aspettare che più un tipo è seguito, più  gli studi d'animazione produrranno anime di quel tipo. 
+
+
+## ...e per i generi?
+
+```{r eval=TRUE, echo=FALSE}
+anime_clean_genre=anime %>% 
+  mutate(genre = str_remove(genre, "\\["),genre = str_remove(genre, "\\]")) %>% 
+  separate_rows(genre, sep = ",") %>% 
+  mutate(genre = str_remove(genre, "\\'"),genre = str_remove(genre, "\\'"),genre = str_trim(genre))
+
+genre_anime = anime_clean_genre %>% 
+  filter(!genre=="") %>% 
+    group_by(genre) %>% 
+    summarise(nAnime = n(), nMembers = sum(members)) %>%
+    arrange(nAnime) %>% 
+  mutate(Anime_pubblicati = nAnime / sum(nAnime), Membri=nMembers/sum(nMembers)) %>% 
+  mutate(Genre=factor(genre,genre)) %>% 
+  slice_tail(n = 35) %>% 
+pivot_longer(cols=4:5, names_to="chart", values_to = "Relative_Freq")
+  
+
+genre_anime %>% 
+  ggplot(aes(x=Genre, y=Relative_Freq, colour = factor(Genre))) +
+    geom_segment( aes(x=Genre, xend=Genre, y=0, yend=Relative_Freq), color="grey") +
+    geom_point(size=4)  +
+  coord_flip()+
+  theme_light()+
+    theme(
+      legend.position = "none",
+        panel.spacing.x = unit(2, "cm")
+    ) +
+    labs(title = "Frequenza degli anime pubblicati e dei membri, per ciascun genere.",
+       y = "Frequenza relativa", x = "Genere")+
+    facet_wrap(~chart, scales = "free_y")
+
+
+```
+Per i generi, al contrario dei tipi, si nota immediatamente che c'è una *discrepanza* tra gli anime seguiti e quelli pubblicati, infatti analizzando l'ordinamentdo per frequenza, non è detto che, in proporzione, gli anime con più membri siano quelli più prodotti dagli studi d'animazione. 
+
+
+Questo può essere perchè ci possono essere casi in cui per alcuni generi, seppur prodotti in quantità minore, ci sono degli anime outlier(magari qualitativamente migliori) che piacciono di più agli spettatori, e quel singolo anime porta molti membri per quel certo genere.
+
+
+Come si può vedere per esempio dal genere "**Romance**", questo si colloca 10° posto tra quelli pubblicati, mentre è 3° per numero di membri. 
+
+
+Al contrario, il genere "**Kids**" è 7° tra quelli pubblicati, mentre risulta tra quelli meno seguiti, probabilmente perchè gli spettatori, avendo un'età bassa, non utilizzano ovviamente MyAnimeList, e quindi le persone che seguono questo genere, ma anche altri, sono presenti in proporzione minore che nella realtà. 
+  
+
+I generi di **commedia** e **azione** rimangono comunque i più pubblicati e seguti da più membri.
+
+
+## Qual è la durata degli episodi di ciascun tipo di anime?
+
+```{r eval=TRUE, echo=FALSE}
+
+duration_anime= anime %>% mutate(
+                hours = if_else(str_detect(duration, "[0-9]*(?= hr.)"),as.numeric(str_extract(duration, "[0-9]*(?= hr.)")),0),
+                minutes = if_else(str_detect(duration, "[0-9]*(?= min.)"),as.numeric(str_extract(duration, "[0-9]*(?= min.)")),0),
+                seconds = if_else(str_detect(duration, "[0-9]*(?= sec.)"),as.numeric(str_extract(duration, "[0-9]*(?= sec.)")),0),
+                duration = hours*60 + minutes + seconds/60,
+                duration = na_if(duration, 0)
+                ) %>% 
+                select(-hours, -minutes, -seconds)
+
+duration_anime$durType = cut(duration_anime$duration, c(0, 5, 15, 30, 45, 60, 120, Inf),labels = c("Meno di 5 minuti", "Tra 6 e 15 minuti", "Tra 16 e 30 minuti", "Tra 31 e 45 minuti", "Tra 46 e 60 minuti", "Tra 1 e 2 ore","Piu di 2 ore"), include.lowest = T)
+duration_anime$durType = factor(duration_anime$durType, levels = c(levels(duration_anime$durType), "Unknown"))
+duration_anime$durType[is.na(duration_anime$durType)] = "Unknown"
+
+duration_type = duration_anime %>% 
+    filter(type != "Unknown", durType != "Unknown") %>% 
+    group_by(Type = type, Duration=durType) %>% 
+    summarise(nAnime = n()) %>% 
+    ungroup() %>% 
+    group_by(Type) %>% 
+    mutate(Relative_Freq = nAnime / sum(nAnime))
+    
+
+ggplotly(
+  
+duration_type %>% 
+  ggplot(aes(fill=Duration, y=Relative_Freq, x=Type)) + 
+    geom_bar(position="dodge", stat="identity") +
+  theme_light()+
+labs(title = "Frequenza del tipo di durata degli episodi, per ciascun tipo di anime.",
+       y = "Frequenza relativa", x = "Tipo", fill="Durata")
+
+)
+
+
+```
+* I tipi "*TV*" e "*OVA*" sono quelli che hanno la durata più frequente tra 16 e 30 minuti, ed in entrambi i casi è sopra il 60%, questo perchè sono tipi molto simili in termini di contenuto e caratteristiche dei loro anime, essendo l'OVA nate per il mercato home video, in corrispondenza all'esigenza di avere sempre a disposizione le registrazioni delle serie desiderate. 
+
+* Gli anime del tipo "*Movie*" durano nel 90% dei casi tra i 46 e i 60 minuti, cosa che, se paragonata alla durata media di 1.30h dei film non anime, risulta inusuale.  
+
+* I tipi "*Music*", "*ONA*" e "*Special*" sono minori e tutti accomunati da essere tipi i cui anime sono di solito clip o video/serie corti, e questo è evidenziato dai dati, dove per tutti e tre, la durata più frequente è meno di 5 minuti.
+
+* Molto rari sono gli anime con durata tra 1 e 2 ore e ancor di più quelli con durata maggiore a 2 ore, la cui frequenza è quasi nulla.
+
+
+## Gli anime con più episodi hanno uno score maggiore?
+
+```{r eval=TRUE, echo=FALSE}
+
+episodes_score_anime=anime %>% 
+  filter(!is.na(type), type!="Unknown") %>% 
+  mutate(episodes = as.numeric(episodes)) %>% 
+  select(Episodes=episodes, Type=type, Name=name, Score=score)
+
+
+ episodes_score_anime%>% 
+  ggplot(aes(Episodes, Score, label=Name)) +
+  geom_point(aes(color = Type), alpha=0.20) + 
+  facet_wrap(~Type, scales = "free_x")+
+   labs(title = "Relazione tra score e quantità di episodi degli anime, per ciascun tipo.",
+       y = "Score", x = "Quantità di episodi", label="Tipo")+
+   theme_light()+
+theme(
+      legend.position = "none",
+        panel.spacing.x = unit(2, "cm")
+    )
+
+
+```
+
+* Per i tipi "*Movie*" e "*Music*" il numero di episodi, che si concentra soprattutto nell'estremo inferiore,  non ha una relazione significativa con lo score.
+
+* Per i tutti gli altri tipi sembra che all'aumentare dello score aumenta anche il numero di anime con una quantità maggiore, generalmente, di episodi. Questo si osserva soprattutto per gli "*ONA*" ma anche per gli "*Special*", dove tuttavia per gli score più alti l'effetti su attenua, e gli anime hanno una quantità di episodi minore. 
+
+## Quanti anime sono stati pubblicati ogni anno?
+
+```{r eval=TRUE, echo=FALSE}
+date_anime = anime %>% 
+  mutate(
+         aired = str_remove(aired, "\\{"),
+         aired = str_remove(aired, "\\}"),
+         aired = str_remove(aired, "'from': "),
+         aired = str_remove(aired, "'to': "),
+         aired = word(aired, start = 1, 2, sep = ",")
+         ) %>% 
+  separate(aired, into = c("start_date", "end_date"), sep = ",") %>% 
+  mutate(
+         start_date = str_remove_all(start_date, "'"),
+         start_date = str_sub(start_date, 1, 10),
+         end_date = str_remove_all(start_date, "'"),
+         end_date = str_sub(end_date, 1, 10)
+         ) %>%
+  mutate(
+         start_date = lubridate::ymd(start_date),
+         end_date = lubridate::ymd(end_date),
+         decade = as.factor(if_else(!is.na(year(start_date)), paste(substr(year(start_date), 1, 3), "0's", sep = ""),NULL))
+         ) 
+
+year_freq = date_anime %>% 
+    filter(!is.na(year(start_date)),year(start_date)<2019,type != "Unknown") %>% 
+    group_by(Year = year(start_date), Type=type) %>% 
+    summarise(Freq = n())
+
+ggplotly(
+
+year_freq %>% 
+  ggplot(aes(y=Freq,x=Year, colour=Type)) +
+  geom_line()+
+  theme_light()+
+labs(title = "Frequenza del numero di anime pubblicati all'anno, per ciascun tipo.",
+       y = "Frequenza assoluta", x = "Anno", colour="Tipo")
+
+)
+
+
+```
+* Il numero di anime totale sta **aumentando** sempre di più, ma alcuni tipi sembrano frenare: gli "*Special*" hanno una tendenziale descrescita dal 2014, mentre gli "*OVA*" hanno subito una forte decrescita dal 1993 al 1995, hanno avuto un periodo di relativa stagnazione fino al 2014 e poi hanno subito un'altra forte decrescita.
+
+* Il tipo di anime più recente sono gli "*ONA*", che cominciano a sorgere nel 1998, cioè alla fine degli anni '90, quando infatti il **Web** rilevava una forte espansione, e ciò corrisponde al fatto che il canale di trasmissione per questo tipo è proprio internet e l'Web. Da allora è stato il tipo che ha avuto la **crescita più veloce** di pubblicazioni, seconda solo al tipo "*TV*".
+
+* Il tipo **più vecchio** è "*Movie*", i cui primi anime risalgono invece al 1917, ed è rimasto l'unico fino ai primi anni '60, periodo nel quale sono nati anche tutti gli altri tipi(esclusi gli "*ONA*").
+
+* In generale, per tutti i tipi(esclusi gli "*OVA*"), l'inizio degli anni **2000** è coinciso con una **repentina crescita** del numero di anime pubblicati, che dura fino ai giorni nostri. Questo indica un crescente interesse nel produrre questi generi animati, dettato dal maggiore interesse e dal crescente numero di spettatori.
+
+
+Nelle due seguenti sezioni verranno effettuate analisi prima solo su dati degli anime con tipo "*TV*" e "*Movie*", e poi solo per quelli "*TV*", questo perchè sono ancora attualmente i più importanti, sia in termini economici che del numero di spettatori.
+
+# Analisi anime "*TV*" e "*Movie*"
+
+## Come varia il rating degli anime nel tempo?
+
+> Il sistema del **rating** classifica film, serie TV o altre produzioni in base al loro contenuto, un provvedimento volto a stabilire il pubblico adatto alla loro visione.
+
+
+```{r eval=TRUE, echo=FALSE}
+rating_anime = date_anime %>%
+    filter(type %in% c("TV","Movie"),!is.na(decade)) %>% 
+    group_by(Type=type,"Decade" = decade, "Rating"=rating) %>% 
+    summarise(Freq = n()) %>% 
+  arrange(-Freq)
+
+rating_anime %>% 
+  ggplot(aes(y=Freq, x=Decade, colour=Rating,group = Rating))+
+  geom_line()+
+  geom_point()+
+labs(title = "Serie temporale del rating, per i tipi TV e Movie.",
+       y = "Frequenza assoluta", x = "Decennio")+
+facet_wrap(~Type, scales = "free")+
+  theme_light()+
+    theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+
+
+```
+Dai dati emerge che attualmente il rating per il tipo "*Movie*" è i in maggioranza **G**, cioè per tutte le età, ma è seguito subito da **PG-13**, cioè per i maggiori di 13 anni. Questo è il contrario di quanto accade per il tipo "*TV*", dove la maggior parte degli anime è, a partire dagli anni '90, PG-13, seguito da G. Tuttavia nell'ultimo decennio , il divario tra questi due rating, è molto più grande per "*TV*", rispetto a "*Movie*".
+
+
+Questo corrisponde al fatto che gli anime maggiormente prodotti e visti per TV, soprattutto negli ultimi dieci/venti anni, sono **Shōnen**, cioè una categoria indirizzata principalmente a un pubblico maschile, a partire dall'età scolare fino alla maggiore età.
+
+
+## A partire da che fonte sono stati realizzati gli anime?
+
+```{r eval=TRUE, echo=FALSE}
+sources_anime = anime %>% 
+  filter(type %in% c("TV","Movie"),source!="Unknown", source!="Digital manga") %>% 
+    group_by(Type=type,Source=source) %>% 
+    summarise(Freq = n()) %>% 
+  arrange(Freq)%>%
+  mutate(Freq = Freq / sum(Freq)) %>% 
+  mutate(Source=factor(Source,Source))
+
+
+sources_anime %>% 
+  ggplot(aes(x=Source, y=Freq, colour = factor(Source))) +
+    geom_segment( aes(x=Source, xend=Source, y=0, yend=Freq), color="grey") +
+    geom_point(size=4)  +
+  coord_flip()+
+  theme_light()+
+    theme(
+      legend.position = "none"
+    ) +
+    labs(title = "Frequenza della fonte da cui l'anime è stato concepito, per i tipi TV e Movie .",
+       y = "Frequenza relativa", x="Fonte")+
+    facet_wrap(~Type, scales = "free_y")
+
+
+```
+
+Per entrambi i tipi "*TV*" e "*Movie*" le due fonti più importanti sono "**Original**" e "**Manga**". Per i "*Movie*", infatti, circa metà(50%) degli anime sono originali, e quindi la storia che raccontano è inedita, e un'altro 25% sono tratti da manga, cioè fumetti giapponesi. Per gli anime "*TV*" invece è il contrario, e la maggior parte sono serie adattamenti di manga, e i secondi più frequenti sono invece gli anime originali. 
+
+
+Bisogna anche menzionare le "**Light Novel**",  romanzi illustrati giapponesi con le caratteristiche estetiche e lo stile di un manga, che negli ultimi anni sono sempre più utilizzate come fonte per realizzare adattamenti anime, e attualmente si posizionano terze per frequenza del tipo "*TV*". 
+
+
+
+
+# Analisi anime "*TV*"
+
+## Gli anime recenti sono più graditi dagli spettatori?
+
+Per rispondere a questo quesito bisogna analizzare l'andamento nel tempo dello score, che utilizziamo come indice di gradimento. Calcolando la correlazione tra gli anni e lo score medio degli anime pubblicati in corrispondenza di ciascun anno, otteniamo:
+
+```{r eval=TRUE, echo=FALSE}
+
+avg_score_anime = date_anime %>% 
+    filter(type=="TV", score != 0, scored_by > 10, year(start_date)<2019) %>% 
+    group_by(Year = year(start_date)) %>% 
+    summarise(Avarage_score = round(mean(score, na.rm = T), 2))
+
+avg_score_genre = date_anime %>% 
+  mutate(genre = str_remove(genre, "\\["),genre = str_remove(genre, "\\]")) %>% 
+  separate_rows(genre, sep = ",") %>% 
+  mutate(genre = str_remove(genre, "\\'"),genre = str_remove(genre, "\\'"),genre = str_trim(genre)) %>% 
+    filter(type=="TV", score != 0, scored_by > 10, year(start_date)<2019) %>% 
+    group_by(Genre=genre, Year = year(start_date)) %>% 
+    summarise(Avarage_score = round(mean(score, na.rm = T), 2))
+
+cor(avg_score_anime$Year, avg_score_anime$Avarage_score)
+```
+Questo indica una **modesta correlazione lineare positiva**, cioè all'aumentare degli anni sembrerebbe che lo score aumenti. C'è da dire inoltre che ci sono anime che durano diversi anni ma il loro score viene utilizzato solo nel calcolo della media dell'anno in cui è stato pubblicato; questo però risulta trascurabile nei nostri risultati, siccome nella maggior parte dei casi lo score di questi anime subisce solo minime fluttuazioni nel corso degli anni in cui vengono trasmessi.
+
+```{r eval=TRUE, echo=FALSE}
+Genere=avg_score_genre$Genre
+
+ggplotly(
+  
+ggplot()+
+  geom_line(data=avg_score_anime,aes(y=Avarage_score, x=Year))+
+  geom_smooth(data=avg_score_anime,aes(y=Avarage_score, x=Year))+
+  geom_point(data=avg_score_genre,aes(y=Avarage_score, x=Year,colour=Genre),alpha=0.30)+
+  theme_light()+
+  theme(
+      legend.position = "none"
+    )+
+labs(title = "Serie storica dello score medio, di ciascun genere e totale (TV).",
+       y = "Score medio", x = "Anno")
+
+)
+```
+
+Nel grafico ottenuto dai dati vengono visualizzati:
+
+* Come *punti*, gli **score medi** di ciascun **genere** ogni anno.
+* La *linea spezzata nera* è l'andamento negli anni dello **score medio totale**.
+* La *linea blu*, ha lo stesso significato della nera ma è smooth(smussata).
+
+Da queste si può dedurre che c'è una **corrlezione** lineare **positiva**, cioè con l'aumentare degli anni lo score tende a crescere, effetto che tuttavia si attenua negli ultimi anni. Si notano anche lo score medio totale minimo(6.03) e quello massimo(7.12), in corrispondenza rispettivamente degli anni *1965* e *1996.*
+
+Altre considerazioni riguardo agli score medi del genere sono che "**Cars**" è quello che presenta lo score medio più basso tra tutti, e dal 2006 ha avuto quasi tutti gli anni gli esiti peggiori, molto più bassi rispetto alla media totale. Il genere che invece ha ottenuto lo score medio migliore(8.79) è stato "**Sports**" nel 2000.
+
+## Come sono distribuiti i valori degli score in ciascun decennio?
+
+
+```{r eval=TRUE, echo=FALSE}
+score_density = date_anime %>% 
+    filter(type=="TV",score != 0, scored_by > 10, !is.na(decade)) %>% 
+    select(Score=score,Decade=decade) %>% 
+  arrange(Score)
+
+ggplotly(
+  
+score_density %>% 
+  ggplot(aes(Score,   colour = Decade))+
+   geom_line(stat="Density")+
+  theme_light()+
+labs(title = "Densità dello score, per ciascun decennio (TV).",
+       y = "Valore densità", x = "Score", colour="Decennio")
+)
+
+```
+Dal grafico della densità risaltano due principali caratteristiche:
+
+1. Negli anni '60 la curva di densità è allungata e con code pesanti, ma con l'aumentare dei decenni si appiattisce spempre di più, e ciò significa che col passare dei decenni la distribuzione degli score tende ad essere più uniforme.
+
+2. Il baricentro e il massimo della curva di densità, si sposta verso valori sempre maggiori, all'aumentare dei decenni. Questo indica, che, come visto in precedenza, la media dello score diventa maggiore con il passare degli anni.
+
+
+Per verificare queste caratteristiche utilizziamo una visualizzazione tramite i boxplot:
+
+
+```{r eval=TRUE, echo=FALSE}
+ggplotly(
+  
+score_density %>% 
+  ggplot(aes(y=Score, x=Decade))+
+   geom_boxplot()+
+  theme_light()+
+labs(title = "Boxplot dello score, per ciascun decennio (TV).",
+       y = "Score", x = "Decennio")
+)
+
+```
+
+La prima caratteristica può essere confermata osservando che i baffi del boxplot diventano sempre più ampi con il passare dei decenni.
+
+La seconda invece è verificata dal fatto che anche la mediana aumenta nei decenni, tranne nell'ultimo, dove decresce lievemente, ma questo è conforme a quando visto in precedenza, per cui la serie temporale dello score aveva negli ultimi anni una tenue decrescita. 
+
+
+## Qual è l'affidabilità degli score?
+
+Dato che ogni anime ha associato uno score e il numero di persone che gli hanno attribuito uno score, possiamo dire che l'affidabilità dello score è direttamente proporzionale alla quantità di votanti, cioè piu persone votano un anime, più possiamo essere sicuri che questo esprima correttamente quanto l'anime possa essere piacevole da guaradare.
+
+```{r eval=TRUE, echo=FALSE}
+scores_anime = anime %>% 
+    filter(type=="TV", score != 0) %>% 
+    select(Name=name,Score=score,Scored_by=scored_by)
+
+ggplotly(
+  scores_anime %>% 
+  ggplot(aes(y=Score, x=Scored_by, label=Name))+
+  geom_point(alpha=0.20)+
+    coord_flip()+
+    theme_light()+
+labs(title = "Score e quantità di votanti di ciascun anime (TV).",
+       y = "Score", x = "Quantità di votanti")
+)
+
+```
+Dai dati si può osservare subito tuttavia che la quantità di votanti aumenta all'aumentare dello score, e questo implica che gli score bassi hanno una affidabilità molto inferiore rispetto a quelli con score alti.
+
+Questo può essere motivato dal fatto che si avrà un effetto di positive feedback loop, cioè più un anime accumula spettatori, tendenzialmente, più persone verranno e scoprire di questo, e questo lo farà diventare ancora più famoso e aumentare ancor più il proprio pubblico e così via. 
+
+
+Si ha quindi che gli anime con una esposizione maggiore al pubblico e con una qualità superiore avranno più persone che esprimeranno uno score, che sarà alto, mentre succederà il contrario per quelli che hanno uno score basso.
+
+Lo stesso effetto può essere osservato visualizzando la media degli score e il numero medio di votanti per ciascun studio d'animazione:
+
+
+
+```{r eval=TRUE, echo=FALSE}
+studio_scores_anime = anime %>% 
+  mutate(studio = str_remove(studio, "\\["),studio = str_remove(studio, "\\]")) %>% 
+  separate_rows(studio, sep = ",") %>% 
+  mutate(studio = str_remove(studio, "\\'"),studio = str_remove(studio, "\\'"),studio = str_trim(studio)) %>% 
+  filter(type=="TV", score != 0, studio!="") %>% 
+  group_by(studio) %>% 
+  summarise(Scored_by=sum(scored_by)/n(),Score=sum(score)/n()) %>% 
+  arrange(-Score)
+
+
+ggplotly(
+  studio_scores_anime %>% 
+  ggplot(aes(y=Score, x=Scored_by, label=studio))+
+  geom_point(alpha=0.20)+
+    coord_flip()+
+    theme_light()+
+labs(title = "Score e quantità di votanti medi per gli anime di ciascun studio (TV).",
+       y = "Score medio", x = "Quantità media di votanti")
+)
+
+```
+
+Il numero di persone che hanno dato lo score a un certo anime non può quindi essere considerato un indice robusto per la loro affidabilità, per i motivi evidenziati in precedenza.
+
+
+## Gli anime di quale stagione sono i migliori?
+
+Per rispondere a questo quesito verra utilizzato il [rank](https://it.wikipedia.org/wiki/MyAnimeList#Punteggio) di un'anime, cioè la posizione in classifica.
+
+```{r eval=TRUE, echo=FALSE}
+
+
+season_anime= date_anime %>% 
+  filter(type=="TV", score != 0, scored_by > 10, !is.na(premiered), !is.na(decade)) %>% 
+  mutate(Season = as.factor(if_else(!is.na(premiered), word(premiered, start = 1, end=1, sep = " ") ,NULL))) %>% 
+  group_by(Decade=decade,Season) %>% 
+  summarise("Rank  somma"=sum(rank), "Rank proporzione"=sum(rank)/n()) %>% 
+  pivot_longer(cols=3:4, names_to="chart", values_to = "Rank")
+
+
+season_anime %>% 
+  ggplot(aes(y=Rank, x=Decade,   colour = Season, group=Season))+
+   geom_line()+
+  geom_point()+
+  facet_wrap(~chart, scales = "free_y")+
+  theme_light()+
+labs(title = "Serie temporale del rank, per ciascuna stagione di pubblicazione (TV).",
+       y = "Rank", x = "Decennio", colour="Stagione")
+
+
+```
+Nel grafico "*Rank somma*" il rank rappresentato è appunto la semplice somma dei rank degli anime delle rispettive stagioni, in ciascun decennio.
+
+
+Nel grafico "*Rank proporzione*", invece, il rank rappresentato è calcolato dividendo la somma descritta in precedenza per il numero di anime considerati nel calcolo di essa, ed è un indice migliore perchè bilancia meglio il peso che viene attribuito a ciascuna stagione.
+
+
+Nel primo grafico si nota dunque che per tutti i decenni(tranne gli anni '70 dove la stagione "*Fall*" ha un valore più alto di "*Spring*"), tutte le stagioni mantengono sempre lo stesso ordinamento, e la stagione con il rank minore è "*Summer*", che quindi è quella che ha gli anime migliori o più graditi(minore è il rank, migliore è la posizione in classifica), mentre quella con il rank maggiore è "*Spring*", dunque con gli anime peggiori rispetto agli altri. Appare dunque che scegliendo un anime pubblicato in estate, si hanno più probabilità che questo sia gradevole.
+
+
+Dal secondo grafico invece le osservazioni cambiano, e si può vedere come le stagioni "*Summer*" e "*Fall*" abbiano, nell'ultimo decennio, il valore minore di rank, quasi equivalente, quindi attualmente gli anime autunnali sono migliori di quanto previsto in precedenza, mentre la stagione "*Spring*" rimane sempre quella con il valore più alto. Inoltre, durante i decenni c'è una variazione tra l'ordinamento dei rank che nel precedente grafico appariva nulla.
+
+
+# Text mining sulle sinossi
+
+## Analisi Term frequency
+
+```{r eval=TRUE, echo=FALSE}
+words_anime = anime %>%
+  select(synopsis,type) %>% 
+  filter(!is.na(synopsis), str_length(synopsis)>=20, type!="Unknown") %>% 
+  unnest_tokens(word, synopsis) %>%
+  count(type, word, sort = TRUE) %>%
+  anti_join(stop_words, by="word") %>% 
+  mutate(word = wordStem(word))
+
+words_anime %>%
+  arrange(desc(n)) %>%
+    group_by(Type=type) %>% 
+   slice_max(n, n=10) %>%
+  ungroup() %>%
+  mutate(Word = reorder(word, n),Freq=n) %>%
+  ggplot(aes(Word, Freq, fill=Type)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Type, ncol = 2, scales = "free") +
+  coord_flip()+
+  theme_light()+
+  theme(
+      legend.position = "none",
+        panel.spacing.x = unit(2, "cm")
+    )+
+   labs(title = "Term frequency nella sinossi degli anime, per ciascun tipo.",
+       x = "Parola", y = "Term frequency", fill="Tipo")
+  
+
+
+```
+
+Dai risultati ottenuti applicando le tecniche di text mining si nota che per quattro dei sei tipi di anime il termine più frequente è "*sourc*" derivato dallo stemming della parola "source", cioè fonte, e ciò è dato dal fatto che alla fine di molte sinossi viene citata la fonte da cui esse provengono. 
+
+
+Probabilmente il tipo "*Music*" è il più interessante da osservare, perchè i suoi termini più frequenti rispecchiano i suoi contenuti, cioè "music", "video", "song" ma anche, a frequenza minore, "album" e "band", tutti temi ricorrenti in questo tipo.
+
+Un'altra rappresentazione che può essere utile è quella del wordcloud:
+
+```{r eval=TRUE, echo=FALSE}
+wordcloud_anime=words_anime %>% 
+  group_by(word) %>% 
+  summarise(n=sum(n)) %>% 
+  arrange(-n)
+
+set.seed(1234)
+wordcloud(words = wordcloud_anime$word , freq = words_anime$n, min.freq = 5,
+          max.words=100, random.order=FALSE, rot.per=0.40, 
+          colors=brewer.pal(8, "Dark2"))
+
+```
+
+Da questa rappresentazione osserviamo i termini che hanno frequenza totale maggiore, come "girl", "school" e "world", che possono essere termini utili per descrivere nelle sinossi temi principali e caratteristici degli anime analizzati. 
+
+## Verifica legge di Zipf su Term Frequency
+
+> La legge di Zipf asserisce che la frequenza con cui una parola compare è inversamente proporzionale al proprio rank(la posizione in cui compare se le parole sono ordinare in modo decrescente per frequenza). 
+
+```{r eval=TRUE, echo=FALSE}
+total_words = words_anime %>% 
+  group_by(type) %>% 
+  summarize(total = sum(n))
+
+words_anime_total = 
+  left_join(words_anime, total_words, by = "type")
+
+freq_by_rank = words_anime_total %>% 
+  group_by(type) %>% 
+  mutate(Rank = row_number(), "Term_Frequency" = n/total, Type=type)
+
+mod = lm(log10(Term_Frequency) ~ log10(Rank), data = freq_by_rank)
+
+ggplotly(
+  
+freq_by_rank %>% 
+  ggplot(aes(Rank, Term_Frequency, colour = Type)) + 
+  geom_abline(intercept = mod$coefficients[1], 
+              slope = mod$coefficients[2], 
+              color = "gray50", 
+              linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8) + 
+  scale_x_log10() +
+  scale_y_log10()+
+  theme_light()+
+   labs(title = "Verifica legge di Zipf per le parole della sinossi, per ciascun tipo.",
+       x = "Rank", y = "Term frequency", colour="Tipo")
+
+)
+```
+Dal grafico ottenuto per la verifica della legge di Zipf si nota che il tipo "*Music*" è l'unico che inizialmente si avvicina di più rispetto agli altri alla retta a tratti, ma nonostante ciò tutti i tipi rimangono inferiori ad essa nella parte iniziale e ciò significa che la loro frequenza è inferiore, per il rank che hanno, a quento ci si aspetterebbe dalla legge di Zipf. 
+
+
+Tuttavia, a partire circa dal rank 600, le *curve convergono* e si allineano fino alla fine alla retta a tratti, e ciò indica che, per questi rank, la legge di Zipf può essere considerata *valida*.
+
+## Analisi TF-IDF
+
+```{r eval=TRUE, echo=FALSE}
+words_anime_tfidf = suppressWarnings(
+  words_anime %>%
+  bind_tf_idf(word, type, n) %>% 
+  arrange(desc(tf_idf))
+)
+
+
+words_anime_tfidf %>%
+  group_by(type) %>% 
+  slice_max(tf_idf, n=9) %>%
+  ungroup() %>%
+  mutate(Word = reorder(word, tf_idf), TF_IDF=tf_idf, Type=type) %>%
+  ggplot(aes(Word, TF_IDF, fill = Type)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Type, ncol = 2, scales = "free") +
+  coord_flip()+ 
+  theme_light()+
+ theme(
+      legend.position = "none",
+        panel.spacing.x = unit(2, "cm")
+    )+
+   labs(title = "TF-IDF nella sinossi degli anime, per ciascun tipo.",
+       x = "Parola", y = "TF-IDF", fill="Tipo")
+
+```
+
+Dall'analisi TF-IDF, che tiene conto anche del numero di documenti(nel nostro caso numero di sinossi), emergono i termini che hanno maggiore importanza all'interno di ciascun tipo, e come può essere osservato sono per la maggior parte nomi di personaggi o comunque termini che sono specifici del dominio in cui sono presenti.
+
+
+Per esempio, il termine "*nobita*" che presenta il valore maggiore di TF-IDF per il tipo "*Movie*", è il protagonista della serie "Doreamon", quindi un termine  peculiare in questo ambito, e che potrebbe avere un significato totalmente sconosciuto per chi non ne è a conoscenza.
+
+## Analisi del sentimento
+
+```{r eval=TRUE, echo=FALSE}
+
+sentiment_words=words_anime %>%
+  inner_join(get_sentiments("nrc"), by = "word")
+
+
+sentiment_words %>%
+  count(Word=word,Sentiment=sentiment,sort = TRUE) %>% 
+  group_by(Sentiment) %>%
+  slice_max(n,n=10) %>%
+  ungroup() %>%
+  mutate(Word = reorder(Word, n), Contribution=n) %>%
+  ggplot(aes(Word, Contribution, fill = Sentiment)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Sentiment, scales = "free_y") +
+  coord_flip()+
+   labs(title = "Parole che contribuiscono di più a ciascun sentimento nelle sinossi.", fill="Sentimento", 
+         x="Parola", y="Contributo al sentimento")+
+  theme_light()+
+   theme(
+      legend.position = "none",
+        panel.spacing.x = unit(2, "cm")
+    )
+
+
+```
+Dall'analisi del sentimento con il dizionario "*nrc*" i risultati ottenuti sembra che indichino come prevalenti i sentimenti "anticipation", "fear" ma anche "joy", a differenza di "disgust", che pare minimo; sembra anche che la frequenza del polo di sentimenti "positive" si maggiore di quelli "negative".
+
+
+Per verificare ciò indaghiamo sui valori totali dei sentimenti:
+
+```{r eval=TRUE, echo=FALSE}
+
+sentiment_words %>% 
+  count(sentiment) %>%  
+  arrange(-n) %>% 
+   mutate(Sentiment=factor(sentiment,sentiment), Total_Value=n) %>% 
+  ggplot(aes(y=Total_Value, x=Sentiment) ) +
+  geom_bar(stat = "identity") +
+  theme_light()+
+   labs(title = "Valore totale di ciascun sentimento nelle sinossi.",
+       y = "Valore totale del sentimento", x = "Sentimento")
+
+
+```
+
+Dal diagramma a barre ottenuto possiamo stabilire che in verità il polo dei sentimenti "negative" sovrasta, anche se di poco, quello dei "positive".
+
+
+Il sentimento "disgust" come predetto in precedenza è quello che compare in quantità minima, mentre "fear" è quello maggiore; "anticipation" e "joy", infine, sono meno rilevanti di quanto ci si poteva aspettare in precedenza.
+
+
+Questi sentimenti non corrispondono ai sentimenti che gli anime presentano, ma solamente quelli delle sinossi, che dipendono molto anche dagli autori di queste e dal loro modo di riassumere, e non solo dai contenuti e temi propri degli anime in questione.
+
+
+## Conclusione
+
+Gli anime sono un settore sempre più fiorente e in espansione con il passare degli anni, e questa tendenza di crescita non pare si arresterà, ma bensì sempre più persone di ogni genere ed età si addentreranno in questo genere, che sia per passione o per moda. 
+
+
+Alcuni tipi d'anime come quelli OVA tenderanno a scomparire lentamente, dato che il mercato home video sta svanendo, a favore di formati disponibili direttamente sull'web tramite internet, come le ONA, e forse in un futuro più remoto anche quelli per TV svaniranno.
+
+
+Il mercato anime è quindi attualmente in una fase di boom, ma col tempo questa rapida crescita frenerà inevitabilmente, e solo in futuro sapremmo se nasceranno altri generi che soppianteranno queste animazioni di origine giapponese, oppure esse manterranno in qualche modo la posizione di rilievo che hanno attualmente.
